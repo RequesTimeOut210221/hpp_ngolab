@@ -79,3 +79,11 @@ export interface CashflowSummary {
   total_cash_out: number;
   balance: number;
 }
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  role: 'Super Admin' | 'Admin' | 'Kasir' | 'Koki' | 'Support' | string;
+  token?: string;
+}

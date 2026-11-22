@@ -6,7 +6,8 @@ import VarianceReportTab from './components/VarianceReportTab';
 import PricingSimulatorTab from './components/PricingSimulatorTab';
 import RecipesTab from './components/RecipesTab';
 import IngredientsTab from './components/IngredientsTab';
-import { CashflowEntry, Recipe, Ingredient } from './types';
+import LoginPage from './components/LoginPage';
+import { CashflowEntry, Recipe, Ingredient, AuthUser } from './types';
 import { motion, AnimatePresence } from 'motion/react';
 
 // Default Master Dataset from ngolab_dataset.xlsx (used as instant fallback if API is starting or cold)
@@ -153,6 +154,14 @@ const DEFAULT_CASHFLOW: CashflowEntry[] = [
 ];
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
+    const saved = localStorage.getItem('hpp_user');
+    if (saved) {
+      try { return JSON.parse(saved); } catch {}
+    }
+    return null;
+  });
+
   const [activeTab, setActiveTab] = useState<string>('cashflow');
   const [cashflowEntries, setCashflowEntries] = useState<CashflowEntry[]>(DEFAULT_CASHFLOW);
   const [recipes, setRecipes] = useState<Recipe[]>(DEFAULT_RECIPES);
@@ -160,6 +169,12 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [costBasis, setCostBasis] = useState<'avco' | 'latest'>('avco');
+
+  const handleLogout = () => {
+    localStorage.removeItem('hpp_user');
+    localStorage.removeItem('hpp_token');
+    setCurrentUser(null);
+  };
 
   // Fetch real data from backend API
   const loadData = useCallback(async (basis: 'avco' | 'latest' = costBasis) => {
@@ -364,8 +379,10 @@ export default function App() {
         return (
           <RecipesTab
             recipes={recipes}
+            ingredients={ingredients}
             isLoading={isLoading}
             searchTerm={searchTerm}
+            onRefresh={() => loadData(costBasis)}
           />
         );
       case 'ingredients':
@@ -374,6 +391,7 @@ export default function App() {
             ingredients={ingredients}
             isLoading={isLoading}
             searchTerm={searchTerm}
+            onRefresh={() => loadData(costBasis)}
           />
         );
       default:
@@ -381,17 +399,27 @@ export default function App() {
     }
   };
 
+  // If user is not logged in, display the dedicated Login Page
+  if (!currentUser) {
+    return <LoginPage onLoginSuccess={(user) => setCurrentUser(user)} />;
+  }
+
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 overflow-hidden font-sans">
       {/* Exact Sidebar from backend_ngolab design system */}
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Sidebar 
+        activeTab={activeTab} 
+        setActiveTab={setActiveTab} 
+        currentUser={currentUser}
+        onLogout={handleLogout}
+      />
 
       {/* Main Container */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top Header */}
         <Header
           activeTab={activeTab}
-          onRefresh={loadData}
+          onRefresh={() => loadData(costBasis)}
           isLoading={isLoading}
           searchTerm={searchTerm}
           setSearchTerm={setSearchTerm}

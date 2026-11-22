@@ -2,6 +2,8 @@ import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import path from 'path';
+import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { fileURLToPath } from 'url';
 import { pool, testConnection } from './db.js';
 
@@ -44,6 +46,117 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     connected: isConnected,
     timestamp: new Date().toISOString()
   });
+});
+
+// ==============================================================================
+// 1.5. AUTENTIKASI KHUSUS HPP NGOLAB (STAFF & ADMIN ONLY)
+// ==============================================================================
+app.post('/api/auth/login', async (req: Request, res: Response) => {
+  const { email, password, identifier } = req.body;
+  const loginUser = (identifier || email || '').trim();
+
+  if (!loginUser || !password) {
+    return res.status(400).json({ success: false, message: 'Email/Username dan Password wajib diisi.' });
+  }
+
+  try {
+    // Hanya staff/admin yang bisa login (Super Admin, Admin, Kasir, Koki, Support)
+    // Sesuai requirement: Sementara ini admin/superadmin dan semua staff bisa masuk.
+    // Kedepannya: dapat dibatasi hanya role finance/logistik/manajerial.
+    const [staffRows]: any = await pool.query(
+      'SELECT id, name, role, email, phone, status, password_hash, password_plain FROM staff WHERE email = ? OR id = ? OR phone = ? LIMIT 1',
+      [loginUser, loginUser, loginUser]
+    );
+
+    if (!staffRows.length) {
+      return res.status(401).json({
+        success: false,
+        message: 'Akun tidak ditemukan atau tidak memiliki hak akses Staff/Admin di sistem Ngolab.'
+      });
+    }
+
+    const staff = staffRows[0];
+
+    if (staff.status !== 'active') {
+      return res.status(403).json({ success: false, message: 'Akun Anda dinonaktifkan. Hubungi Super Admin.' });
+    }
+
+    const ALLOWED_ROLES = ['Super Admin', 'Admin', 'Kasir', 'Koki', 'Support'];
+    if (!ALLOWED_ROLES.includes(staff.role)) {
+      return res.status(403).json({
+        success: false,
+        message: `Role "${staff.role}" tidak diizinkan mengakses modul HPP & Finansial.`
+      });
+    }
+
+    // Password verification: bcrypt -> sha256 -> plaintext fallback
+    let isMatch = false;
+    const storedHash = staff.password_hash;
+
+    if (storedHash) {
+      if (/^\$2[aby]\$/.test(storedHash)) {
+        isMatch = await bcrypt.compare(password, storedHash);
+      } else {
+        const legacyHash = crypto.createHash('sha256').update(password).digest('hex');
+        isMatch = (legacyHash === storedHash);
+      }
+    }
+
+    if (!isMatch && staff.password_plain) {
+      isMatch = (password === staff.password_plain);
+    }
+
+    // Default development / test superuser fallback
+    if (!isMatch && (staff.email === 'admin@gmail.com' || staff.id === 'S001')) {
+      if (password === 'admin123' || password === 'admin') {
+        isMatch = true;
+      }
+    }
+
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Password salah.' });
+    }
+
+    const token = `hpp-token-${staff.id}-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`;
+
+    res.json({
+      success: true,
+      message: `Selamat datang, ${staff.name}!`,
+      user: {
+        id: staff.id,
+        name: staff.name,
+        email: staff.email,
+        role: staff.role
+      },
+      token
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Terjadi kesalahan sistem saat autentikasi', error: error.message });
+  }
+});
+
+app.get('/api/auth/me', async (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ success: false, message: 'Belum login' });
+  }
+
+  // Token format: hpp-token-<staff_id>-<timestamp>-<hex>
+  const token = authHeader.replace('Bearer ', '').trim();
+  const parts = token.split('-');
+  if (parts.length >= 3 && parts[1]) {
+    const staffId = parts[1];
+    try {
+      const [rows]: any = await pool.query('SELECT id, name, role, email, status FROM staff WHERE id = ?', [staffId]);
+      if (rows.length && rows[0].status === 'active') {
+        return res.json({ success: true, user: rows[0] });
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  res.json({ success: false, message: 'Sesi berakhir atau token tidak valid' });
 });
 
 // ==============================================================================
@@ -418,6 +531,149 @@ app.get('/api/recipes', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Gagal memuat resep menu', error: error.message });
+  }
+});
+
+app.post('/api/recipes', async (req: Request, res: Response) => {
+  const { name, category, menu_id, portion_yield, is_subassembly, packaging_cost, cooking_gas_cost, labor_cost, ingredients } = req.body;
+  if (!name || !category) {
+    return res.status(400).json({ success: false, message: 'Nama resep dan kategori wajib diisi.' });
+  }
+
+  const recipeId = req.body.id || `REC-${Date.now()}`;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    await connection.query(
+      `INSERT INTO hpp_recipes (id, menu_id, name, category, portion_yield, is_subassembly, packaging_cost, cooking_gas_cost, labor_cost)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        recipeId,
+        menu_id || null,
+        name,
+        category,
+        Number(portion_yield || 1),
+        is_subassembly ? 1 : 0,
+        Number(packaging_cost || 0),
+        Number(cooking_gas_cost || 0),
+        Number(labor_cost || 0)
+      ]
+    );
+
+    if (Array.isArray(ingredients) && ingredients.length > 0) {
+      for (const ing of ingredients) {
+        if (!ing.ingredient_id && !ing.subassembly_recipe_id) continue;
+        await connection.query(
+          `INSERT INTO hpp_recipe_ingredients (recipe_id, ingredient_id, subassembly_recipe_id, quantity, unit)
+           VALUES (?, ?, ?, ?, ?)`,
+          [
+            recipeId,
+            ing.ingredient_id || null,
+            ing.subassembly_recipe_id || null,
+            Number(ing.quantity || 0),
+            ing.unit || 'satuan'
+          ]
+        );
+      }
+    }
+
+    await connection.commit();
+    res.status(201).json({ success: true, message: 'Resep baru berhasil diracik dan disimpan!', id: recipeId });
+  } catch (error: any) {
+    await connection.rollback();
+    res.status(500).json({ success: false, message: 'Gagal membuat resep baru', error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+app.put('/api/recipes/:id', async (req: Request, res: Response) => {
+  const { name, category, menu_id, portion_yield, is_subassembly, packaging_cost, cooking_gas_cost, labor_cost, ingredients } = req.body;
+  const recipeId = req.params.id;
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [existing]: any = await connection.query('SELECT * FROM hpp_recipes WHERE id = ?', [recipeId]);
+    if (!existing.length) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, message: 'Resep tidak ditemukan.' });
+    }
+
+    await connection.query(
+      `UPDATE hpp_recipes 
+       SET name = COALESCE(?, name),
+           category = COALESCE(?, category),
+           menu_id = ?,
+           portion_yield = ?,
+           is_subassembly = ?,
+           packaging_cost = ?,
+           cooking_gas_cost = ?,
+           labor_cost = ?,
+           updated_at = NOW()
+       WHERE id = ?`,
+      [
+        name || null,
+        category || null,
+        menu_id !== undefined ? menu_id : existing[0].menu_id,
+        portion_yield !== undefined ? Number(portion_yield) : existing[0].portion_yield,
+        is_subassembly !== undefined ? (is_subassembly ? 1 : 0) : existing[0].is_subassembly,
+        packaging_cost !== undefined ? Number(packaging_cost) : existing[0].packaging_cost,
+        cooking_gas_cost !== undefined ? Number(cooking_gas_cost) : existing[0].cooking_gas_cost,
+        labor_cost !== undefined ? Number(labor_cost) : existing[0].labor_cost,
+        recipeId
+      ]
+    );
+
+    if (Array.isArray(ingredients)) {
+      await connection.query('DELETE FROM hpp_recipe_ingredients WHERE recipe_id = ?', [recipeId]);
+      for (const ing of ingredients) {
+        if (!ing.ingredient_id && !ing.subassembly_recipe_id) continue;
+        await connection.query(
+          `INSERT INTO hpp_recipe_ingredients (recipe_id, ingredient_id, subassembly_recipe_id, quantity, unit)
+           VALUES (?, ?, ?, ?, ?)`,
+          [
+            recipeId,
+            ing.ingredient_id || null,
+            ing.subassembly_recipe_id || null,
+            Number(ing.quantity || 0),
+            ing.unit || 'satuan'
+          ]
+        );
+      }
+    }
+
+    await connection.commit();
+    res.json({ success: true, message: 'Resep berhasil diperbarui!' });
+  } catch (error: any) {
+    await connection.rollback();
+    res.status(500).json({ success: false, message: 'Gagal memperbarui resep', error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+app.delete('/api/recipes/:id', async (req: Request, res: Response) => {
+  const recipeId = req.params.id;
+  try {
+    const [usage]: any = await pool.query(
+      'SELECT r.name FROM hpp_recipe_ingredients ri JOIN hpp_recipes r ON ri.recipe_id = r.id WHERE ri.subassembly_recipe_id = ?',
+      [recipeId]
+    );
+    if (usage.length > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Resep tidak dapat dihapus karena digunakan sebagai bahan olahan subassembly di resep "${usage[0].name}".` 
+      });
+    }
+
+    await pool.query('DELETE FROM hpp_recipe_ingredients WHERE recipe_id = ?', [recipeId]);
+    await pool.query('DELETE FROM hpp_recipes WHERE id = ?', [recipeId]);
+    res.json({ success: true, message: 'Resep berhasil dihapus.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Gagal menghapus resep', error: error.message });
   }
 });
 

@@ -14,10 +14,13 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
+import { AuthUser } from '../types';
 
 interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  currentUser?: AuthUser | null;
+  onLogout?: () => void;
 }
 
 export type UserRole = 'Super Admin' | 'Kasir' | 'Koki' | 'Support';
@@ -60,7 +63,7 @@ const navItems = [
   },
 ];
 
-export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
+export default function Sidebar({ activeTab, setActiveTab, currentUser, onLogout }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [activeRole, setActiveRole] = useState<UserRole>('Super Admin');
 
@@ -235,34 +238,35 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
         <div className={cn("flex items-center gap-3 p-2 rounded-xl bg-slate-50 border border-slate-200/70 mb-2", isCollapsed ? "justify-center" : "")}>
           <div className="relative shrink-0">
             <div className="w-8 h-8 rounded-full bg-orange-100 border border-orange-200 overflow-hidden flex items-center justify-center font-bold text-xs text-orange-600 uppercase shadow-sm">
-              IK
+              {currentUser?.name ? currentUser.name.substring(0, 2).toUpperCase() : 'ST'}
             </div>
             <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white ring-1 ring-emerald-200" />
           </div>
           {!isCollapsed && (
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-slate-900 truncate">Ikhwanul</p>
+              <p className="text-xs font-bold text-slate-900 truncate">
+                {currentUser?.name || 'Staff Ngolab'}
+              </p>
               <p className="text-[10px] text-slate-400 font-medium truncate">
-                Super Admin &bull; Ngolab HQ
+                {currentUser?.role || 'Staff'} &bull; Ngolab HQ
               </p>
             </div>
           )}
         </div>
         
-        <button 
-          onClick={() => {
-            const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-            window.location.href = isLocal ? 'http://localhost:3000' : 'https://geasteats.ngolab.online';
-          }}
-          className={cn(
-            "w-full flex items-center justify-center gap-2 p-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors text-xs font-bold",
-            isCollapsed ? "px-0" : ""
-          )}
-          title="Kembali ke Portal Admin Utama"
-        >
-          <LogOut size={14} className="text-slate-400" />
-          {!isCollapsed && <span>Ke Portal Utama</span>}
-        </button>
+        {onLogout && (
+          <button 
+            onClick={onLogout}
+            className={cn(
+              "w-full flex items-center justify-center gap-2 p-2 rounded-lg text-rose-500 hover:bg-rose-50 transition-colors text-xs font-bold cursor-pointer",
+              isCollapsed ? "px-0" : ""
+            )}
+            title="Keluar dari Sesi HPP"
+          >
+            <LogOut size={14} className="text-rose-500" />
+            {!isCollapsed && <span>Keluar / Logout</span>}
+          </button>
+        )}
       </div>
 
       {/* Collapse Toggle Button */}
