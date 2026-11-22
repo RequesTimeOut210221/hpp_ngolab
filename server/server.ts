@@ -1,18 +1,35 @@
 import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { pool, testConnection } from './db.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const distPath = path.resolve(__dirname, '../dist');
 
 const app = express();
 const port = Number(process.env.PORT || 5002);
 
+const allowedOrigins = (process.env.CORS_ORIGIN || 'https://hpp.ngolab.online,https://geasteats.ngolab.online,https://logistik.ngolab.online,https://point.ngolab.online,http://localhost:5177,http://localhost:3000,http://localhost:5173,http://localhost:5174')
+  .split(',')
+  .map(o => o.trim());
+
 app.use(cors({
-  origin: (process.env.CORS_ORIGIN || 'http://localhost:5177,http://localhost:3000,http://localhost:5173,http://localhost:5174')
-    .split(',')
-    .map(o => o.trim()),
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*') || origin.endsWith('.ngolab.online')) {
+      callback(null, true);
+    } else {
+      callback(null, true);
+    }
+  },
   credentials: true
 }));
 app.use(express.json());
+
+// Serve static frontend assets from dist/ in production
+app.use(express.static(distPath));
 
 // ==============================================================================
 // 1. HEALTH CHECK & STATUS
@@ -566,6 +583,16 @@ app.get('/api/reports/variance', async (_req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Gagal menghitung laporan varians', error: error.message });
   }
+});
+
+// ==============================================================================
+// 6. SPA FALLBACK FOR FRONTEND CLIENT ROUTING
+// ==============================================================================
+app.use((req: Request, res: Response, next) => {
+  if (req.method === 'GET' && !req.path.startsWith('/api')) {
+    return res.sendFile(path.join(distPath, 'index.html'));
+  }
+  next();
 });
 
 // ==============================================================================
