@@ -22,6 +22,10 @@ const tabTitles: Record<string, { title: string; subtitle: string }> = {
     title: 'Buku Kas Belanja Harian',
     subtitle: 'Pencatatan real-time kas operasional, belanja bahan, dan pengeluaran shift'
   },
+  variance: {
+    title: 'Rekonsiliasi Varians & Laba Kotor',
+    subtitle: 'Analisis retrospektif perbandingan penjualan riil POS, HPP teoretis, dan pengeluaran kas lapangan'
+  },
   pricing: {
     title: 'Simulator Margin & Pricing POS',
     subtitle: 'Kalkulasi HPP 3-tier, target margin keuntungan, dan integrasi sinkronisasi harga jual menu'

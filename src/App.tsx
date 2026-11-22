@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import CashflowTab from './components/CashflowTab';
+import VarianceReportTab from './components/VarianceReportTab';
 import PricingSimulatorTab from './components/PricingSimulatorTab';
 import RecipesTab from './components/RecipesTab';
 import IngredientsTab from './components/IngredientsTab';
@@ -158,9 +159,10 @@ export default function App() {
   const [ingredients, setIngredients] = useState<Ingredient[]>(DEFAULT_INGREDIENTS);
   const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [costBasis, setCostBasis] = useState<'avco' | 'latest'>('avco');
 
   // Fetch real data from backend API
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (basis: 'avco' | 'latest' = costBasis) => {
     setIsLoading(true);
     try {
       // 1. Fetch cashflow
@@ -184,8 +186,8 @@ export default function App() {
         }
       }
 
-      // 2. Fetch recipes
-      const recRes = await fetch('/api/recipes').catch(() => null);
+      // 2. Fetch recipes with specific cost basis
+      const recRes = await fetch(`/api/recipes?cost_basis=${basis}`).catch(() => null);
       if (recRes && recRes.ok) {
         const json = await recRes.json();
         if (json.data && Array.isArray(json.data) && json.data.length > 0) {
@@ -340,6 +342,10 @@ export default function App() {
             searchTerm={searchTerm}
           />
         );
+      case 'variance':
+        return (
+          <VarianceReportTab />
+        );
       case 'pricing':
         return (
           <PricingSimulatorTab
@@ -347,6 +353,11 @@ export default function App() {
             onSyncPOS={handleSyncPOS}
             isLoading={isLoading}
             searchTerm={searchTerm}
+            costBasis={costBasis}
+            onCostBasisChange={(basis) => {
+              setCostBasis(basis);
+              loadData(basis);
+            }}
           />
         );
       case 'recipes':

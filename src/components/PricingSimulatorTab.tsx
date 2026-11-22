@@ -26,15 +26,28 @@ interface PricingSimulatorTabProps {
   onSyncPOS: (menuId: string | number, newPrice: number, costPrice: number) => Promise<void>;
   isLoading: boolean;
   searchTerm: string;
+  costBasis?: 'avco' | 'latest';
+  onCostBasisChange?: (basis: 'avco' | 'latest') => void;
 }
 
 export default function PricingSimulatorTab({
   recipes,
   onSyncPOS,
   isLoading,
-  searchTerm
+  searchTerm,
+  costBasis: externalCostBasis,
+  onCostBasisChange
 }: PricingSimulatorTabProps) {
   const [selectedRecipeId, setSelectedRecipeId] = useState<string>(recipes[0]?.id || '');
+  const [internalCostBasis, setInternalCostBasis] = useState<'avco' | 'latest'>('avco');
+  const costBasis = externalCostBasis || internalCostBasis;
+
+  const handleCostBasisToggle = (basis: 'avco' | 'latest') => {
+    setInternalCostBasis(basis);
+    if (onCostBasisChange) {
+      onCostBasisChange(basis);
+    }
+  };
   const [targetMargin, setTargetMargin] = useState<number>(65); // default 65% target margin
   const [overheadPercentage, setOverheadPercentage] = useState<number>(10); // default 10% operational overhead
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
@@ -278,6 +291,39 @@ export default function PricingSimulatorTab({
                   >
                     <Sparkles size={14} />
                     {currentRecipe.menu_id ? 'Sinkronkan ke POS' : 'Produk Antara (Non-POS)'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Cost Basis Toggle: AVCO vs Latest Price */}
+              <div className="py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-orange-500" />
+                    Basis Penilaian Biaya (Cost Valuation Engine)
+                  </span>
+                  <p className="text-[11px] text-slate-400">Pilih metode kalkulasi harga bahan baku pembentuk HPP</p>
+                </div>
+                <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleCostBasisToggle('avco')}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all",
+                      costBasis === 'avco' ? "bg-white text-orange-600 shadow-sm border border-slate-200" : "text-slate-500 hover:text-slate-800"
+                    )}
+                  >
+                    AVCO (Rata-rata)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCostBasisToggle('latest')}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all",
+                      costBasis === 'latest' ? "bg-white text-orange-600 shadow-sm border border-slate-200" : "text-slate-500 hover:text-slate-800"
+                    )}
+                  >
+                    Harga Pasar Terkini (Spot)
                   </button>
                 </div>
               </div>

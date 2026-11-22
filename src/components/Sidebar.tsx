@@ -4,6 +4,7 @@ import {
   TrendingUp, 
   UtensilsCrossed, 
   Package, 
+  BarChart3,
   ChevronLeft, 
   ChevronRight, 
   LogOut, 
@@ -28,6 +29,13 @@ const navItems = [
     icon: Wallet, 
     section: 'Finansial & Kas', 
     badge: 'Real-time'
+  },
+  { 
+    id: 'variance', 
+    label: 'Varians & Laba Kotor', 
+    icon: BarChart3, 
+    section: 'Finansial & Kas', 
+    badge: 'POS Rekonsiliasi'
   },
   { 
     id: 'pricing', 
