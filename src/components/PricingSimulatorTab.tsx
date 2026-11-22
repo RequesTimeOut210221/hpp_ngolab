@@ -246,7 +246,9 @@ export default function PricingSimulatorTab({
                     <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-orange-100 text-orange-700 border border-orange-200">
                       {currentRecipe.category}
                     </span>
-                    <span className="text-xs text-slate-400 font-mono">Kode: {currentRecipe.id}</span>
+                    <span className="text-xs text-slate-400 font-mono">
+                      {currentRecipe.menu_id ? `POS ID: ${currentRecipe.menu_id}` : 'Subassembly / Dapur'}
+                    </span>
                   </div>
                   <h2 className="text-xl font-bold text-slate-900 tracking-tight">
                     {currentRecipe.menu_name}
@@ -259,11 +261,23 @@ export default function PricingSimulatorTab({
                     <p className="text-lg font-mono font-bold text-slate-900">{formatRupiah(simulation.currentPosPrice)}</p>
                   </div>
                   <button
-                    onClick={() => setIsSyncModalOpen(true)}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold transition-all shadow-sm shadow-orange-500/20 active:scale-95"
+                    onClick={() => {
+                      if (!currentRecipe.menu_id) {
+                        alert(`Menu "${currentRecipe.menu_name}" belum di-mapping ke katalog POS.`);
+                        return;
+                      }
+                      setIsSyncModalOpen(true);
+                    }}
+                    disabled={!currentRecipe.menu_id}
+                    className={cn(
+                      "flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95",
+                      currentRecipe.menu_id
+                        ? "bg-orange-500 hover:bg-orange-600 text-white shadow-orange-500/20"
+                        : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                    )}
                   >
                     <Sparkles size={14} />
-                    Sinkronkan ke POS
+                    {currentRecipe.menu_id ? 'Sinkronkan ke POS' : 'Produk Antara (Non-POS)'}
                   </button>
                 </div>
               </div>

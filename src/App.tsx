@@ -288,7 +288,10 @@ export default function App() {
   // Handler for syncing price to POS
   const handleSyncPOS = async (recipeId: string | number, newPrice: number, costPrice: number) => {
     const targetRecipe = recipes.find(r => r.id === recipeId);
-    const menuId = targetRecipe?.menu_id || 1;
+    const menuId = targetRecipe?.menu_id;
+    if (!menuId) {
+      throw new Error(`Resep "${targetRecipe?.menu_name || recipeId}" belum memiliki relasi menu_id di POS.`);
+    }
 
     try {
       const response = await fetch('/api/pricing/sync-pos', {

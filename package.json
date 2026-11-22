@@ -8,6 +8,7 @@
     "server": "tsx server/server.ts",
     "dev:all": "concurrently \"npm run server\" \"npm run dev\"",
     "build": "tsc && vite build",
+    "db:migrate": "node scripts/run-migration.cjs",
     "preview": "vite preview --port 5177",
     "start": "tsx server/server.ts"
   },
