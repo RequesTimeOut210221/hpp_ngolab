@@ -17,11 +17,13 @@ import {
   Filter,
   ArrowUpRight,
   ArrowDownRight,
-  DollarSign
+  DollarSign,
+  FileSpreadsheet
 } from 'lucide-react';
 import { CashflowEntry } from '../types';
 import { formatRupiah, cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { ExportService } from '../services/exportService';
 
 interface CashflowTabProps {
   entries: CashflowEntry[];
@@ -149,8 +151,22 @@ export default function CashflowTab({
         </div>
         <div className="flex items-center gap-3">
           <button
+            onClick={() => {
+              ExportService.exportCashflowToExcel(filteredEntries, {
+                total_cash_in: metrics.totalIncome,
+                total_cash_out: metrics.totalExpense,
+                balance: metrics.totalIncome - metrics.totalExpense
+              });
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-emerald-600/20 active:scale-95 cursor-pointer"
+            title="Ekspor Seluruh Buku Kas ke Excel (.xlsx)"
+          >
+            <FileSpreadsheet size={15} />
+            <span>Ekspor Excel</span>
+          </button>
+          <button
             onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-orange-500/20 active:scale-95"
+            className="flex items-center gap-2 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-orange-500/20 active:scale-95 cursor-pointer"
           >
             <Plus size={16} />
             Catat Belanja Baru

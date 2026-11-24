@@ -6,6 +6,7 @@ import VarianceReportTab from './components/VarianceReportTab';
 import PricingSimulatorTab from './components/PricingSimulatorTab';
 import RecipesTab from './components/RecipesTab';
 import IngredientsTab from './components/IngredientsTab';
+import PlannerTab from './components/PlannerTab';
 import LoginPage from './components/LoginPage';
 import { CashflowEntry, Recipe, Ingredient, AuthUser } from './types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -373,6 +374,14 @@ export default function App() {
               setCostBasis(basis);
               loadData(basis);
             }}
+          />
+        );
+      case 'planner':
+        return (
+          <PlannerTab
+            recipes={recipes}
+            onRefresh={() => loadData(costBasis)}
+            currentUser={currentUser}
           />
         );
       case 'recipes':

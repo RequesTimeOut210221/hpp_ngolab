@@ -354,7 +354,7 @@ app.get('/api/ingredients/:id', async (req: Request, res: Response) => {
 });
 
 app.post('/api/ingredients', async (req: Request, res: Response) => {
-  const { id, name, category, purchase_unit, purchase_price, usage_unit, conversion_ratio, yield_percentage } = req.body;
+  const { id, name, category, purchase_unit, package_size, purchase_price, usage_unit, conversion_ratio, yield_percentage, current_stock, min_stock, source_link } = req.body;
   if (!name || !purchase_unit || !usage_unit || purchase_price === undefined || !conversion_ratio) {
     return res.status(400).json({ success: false, message: 'Nama, satuan beli, satuan pakai, harga, dan faktor konversi wajib diisi.' });
   }
@@ -364,13 +364,16 @@ app.post('/api/ingredients', async (req: Request, res: Response) => {
   const ratio = Number(conversion_ratio);
   const costPerUsage = ratio > 0 ? price / ratio : price;
   const yieldPct = yield_percentage ? Number(yield_percentage) : 100.0;
+  const pkgSize = package_size ? Number(package_size) : 1.0;
+  const curStock = current_stock !== undefined ? Number(current_stock) : 50.0;
+  const minStk = min_stock !== undefined ? Number(min_stock) : 10.0;
 
   try {
     await pool.query(
       `INSERT INTO hpp_master_ingredients 
-       (id, name, category, purchase_unit, purchase_price, usage_unit, conversion_ratio, cost_per_usage_unit, avco_price, yield_percentage)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [ingredientId, name, category || 'bahan_baku', purchase_unit, price, usage_unit, ratio, costPerUsage, costPerUsage, yieldPct]
+       (id, name, category, purchase_unit, package_size, purchase_price, usage_unit, conversion_ratio, cost_per_usage_unit, avco_price, yield_percentage, current_stock, min_stock, source_link)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [ingredientId, name, category || 'bahan_baku', purchase_unit, pkgSize, price, usage_unit, ratio, costPerUsage, costPerUsage, yieldPct, curStock, minStk, source_link || null]
     );
     res.status(201).json({ success: true, message: 'Bahan baku baru berhasil ditambahkan.', id: ingredientId });
   } catch (error: any) {
@@ -379,7 +382,7 @@ app.post('/api/ingredients', async (req: Request, res: Response) => {
 });
 
 app.put('/api/ingredients/:id', async (req: Request, res: Response) => {
-  const { purchase_price, conversion_ratio, yield_percentage, category, name } = req.body;
+  const { purchase_price, conversion_ratio, yield_percentage, category, name, package_size, current_stock, min_stock, source_link } = req.body;
   try {
     const [ingRows]: any = await pool.query('SELECT * FROM hpp_master_ingredients WHERE id = ?', [req.params.id]);
     if (!ingRows.length) return res.status(404).json({ success: false, message: 'Bahan tidak ditemukan.' });
@@ -398,9 +401,25 @@ app.put('/api/ingredients/:id', async (req: Request, res: Response) => {
            conversion_ratio = ?,
            cost_per_usage_unit = ?, 
            yield_percentage = ?, 
+           package_size = COALESCE(?, package_size),
+           current_stock = COALESCE(?, current_stock),
+           min_stock = COALESCE(?, min_stock),
+           source_link = COALESCE(?, source_link),
            updated_at = NOW()
        WHERE id = ?`,
-      [name || null, category || null, newPrice, newRatio, costPerUsage, newYield, req.params.id]
+      [
+        name || null, 
+        category || null, 
+        newPrice, 
+        newRatio, 
+        costPerUsage, 
+        newYield,
+        package_size !== undefined ? Number(package_size) : null,
+        current_stock !== undefined ? Number(current_stock) : null,
+        min_stock !== undefined ? Number(min_stock) : null,
+        source_link !== undefined ? source_link : null,
+        req.params.id
+      ]
     );
 
     res.json({ success: true, message: 'Master bahan baku berhasil diperbarui.' });
@@ -838,6 +857,513 @@ app.get('/api/reports/variance', async (_req: Request, res: Response) => {
     });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Gagal menghitung laporan varians', error: error.message });
+  }
+});
+
+// ==============================================================================
+// 7. RENCANA BATCH PRODUKSI & DAFTAR BELANJA PASAR (BATCH PRODUCTION PLANS)
+// ==============================================================================
+app.get('/api/plans', async (_req: Request, res: Response) => {
+  try {
+    const [plans]: any = await pool.query('SELECT * FROM hpp_production_plans ORDER BY plan_date DESC, created_at DESC');
+    const [items]: any = await pool.query(`
+      SELECT pi.*, r.name AS recipe_name, r.category AS recipe_category
+      FROM hpp_production_plan_items pi
+      LEFT JOIN hpp_recipes r ON pi.recipe_id = r.id
+      ORDER BY pi.id ASC
+    `);
+
+    const itemsByPlan = new Map<string, any[]>();
+    for (const it of items) {
+      const list = itemsByPlan.get(it.plan_id) || [];
+      list.push(it);
+      itemsByPlan.set(it.plan_id, list);
+    }
+
+    const result = plans.map((p: any) => ({
+      ...p,
+      items: itemsByPlan.get(p.id) || []
+    }));
+
+    res.json({ success: true, data: result, total: result.length });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Gagal memuat rencana produksi', error: error.message });
+  }
+});
+
+app.get('/api/plans/:id/shopping-list', async (req: Request, res: Response) => {
+  try {
+    const planId = req.params.id;
+    const [items]: any = await pool.query('SELECT * FROM hpp_production_plan_items WHERE plan_id = ?', [planId]);
+    if (!items.length) {
+      return res.status(404).json({ success: false, message: 'Rencana produksi tidak memiliki item menu.' });
+    }
+
+    const [recipes]: any = await pool.query('SELECT * FROM hpp_recipes');
+    const [ingredients]: any = await pool.query('SELECT * FROM hpp_master_ingredients');
+    const [recipeIngs]: any = await pool.query('SELECT * FROM hpp_recipe_ingredients');
+
+    const ingMap = new Map<string, any>(ingredients.map((i: any) => [i.id, i]));
+    const recipeMap = new Map<string, any>(recipes.map((r: any) => [r.id, r]));
+
+    const rawMaterialMap = new Map<string, { 
+      ingredient_id: string; 
+      name: string; 
+      category: string; 
+      total_usage_qty: number; 
+      usage_unit: string; 
+      purchase_unit: string; 
+      conversion_ratio: number;
+      unit_price: number; 
+      source_link?: string; 
+      current_stock: number;
+    }>();
+
+    const addMaterial = (ingId: string, usageQty: number) => {
+      const ing = ingMap.get(ingId);
+      if (!ing) return;
+      const current = rawMaterialMap.get(ingId) || {
+        ingredient_id: ingId,
+        name: ing.name,
+        category: ing.category,
+        total_usage_qty: 0,
+        usage_unit: ing.usage_unit,
+        purchase_unit: ing.purchase_unit,
+        conversion_ratio: Number(ing.conversion_ratio || 1),
+        unit_price: Number(ing.purchase_price || 0),
+        source_link: ing.source_link || null,
+        current_stock: Number(ing.current_stock || 0)
+      };
+      current.total_usage_qty += usageQty;
+      rawMaterialMap.set(ingId, current);
+    };
+
+    for (const item of items) {
+      const targetQty = Number(item.quantity || 0);
+      const subIngs = recipeIngs.filter((ri: any) => ri.recipe_id === item.recipe_id);
+      for (const ri of subIngs) {
+        if (ri.ingredient_id) {
+          addMaterial(ri.ingredient_id, Number(ri.quantity) * targetQty);
+        } else if (ri.subassembly_recipe_id) {
+          const subRec = recipeMap.get(ri.subassembly_recipe_id);
+          const subYield = Number(subRec?.portion_yield || 1);
+          const piecesNeeded = Number(ri.quantity) * targetQty;
+          const batchesNeeded = subYield > 0 ? piecesNeeded / subYield : piecesNeeded;
+
+          const deepIngs = recipeIngs.filter((di: any) => di.recipe_id === ri.subassembly_recipe_id);
+          for (const di of deepIngs) {
+            if (di.ingredient_id) {
+              addMaterial(di.ingredient_id, Number(di.quantity) * batchesNeeded);
+            }
+          }
+        }
+      }
+    }
+
+    const shoppingList = Array.from(rawMaterialMap.values()).map(m => {
+      const purchaseQty = m.conversion_ratio > 0 ? (m.total_usage_qty / m.conversion_ratio) : m.total_usage_qty;
+      const estimatedCost = Math.round(purchaseQty * m.unit_price);
+      return {
+        ...m,
+        purchase_qty: Math.round(purchaseQty * 100) / 100,
+        estimated_cost: estimatedCost
+      };
+    }).sort((a, b) => b.estimated_cost - a.estimated_cost);
+
+    const totalEstimatedCost = shoppingList.reduce((sum, item) => sum + item.estimated_cost, 0);
+
+    res.json({
+      success: true,
+      plan_id: planId,
+      total_estimated_cost: totalEstimatedCost,
+      items_count: shoppingList.length,
+      shopping_list: shoppingList
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Gagal menyusun daftar belanja', error: error.message });
+  }
+});
+
+app.post('/api/plans', async (req: Request, res: Response) => {
+  const { title, plan_date, global_margin, global_fee_type, global_fee_value, notes, created_by, items } = req.body;
+  if (!title || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ success: false, message: 'Judul dan minimal 1 item menu wajib diisi.' });
+  }
+
+  const planId = `plan-${Date.now()}`;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    let grandCost = 0;
+    let grandRevenue = 0;
+
+    for (const it of items) {
+      grandCost += Number(it.total_cost || 0);
+      grandRevenue += Number(it.total_revenue || 0);
+    }
+
+    await connection.query(
+      `INSERT INTO hpp_production_plans 
+       (id, title, plan_date, status, global_margin, global_fee_type, global_fee_value, total_cost, total_revenue, notes, created_by)
+       VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        planId,
+        title,
+        plan_date || new Date().toISOString().split('T')[0],
+        Number(global_margin || 50),
+        global_fee_type || 'percent',
+        Number(global_fee_value || 0),
+        grandCost,
+        grandRevenue,
+        notes || null,
+        created_by || 'Admin Tangolab'
+      ]
+    );
+
+    for (const it of items) {
+      await connection.query(
+        `INSERT INTO hpp_production_plan_items 
+         (plan_id, recipe_id, quantity, margin_percent, fee_type, fee_value, cost_per_unit, total_cost, suggested_price, total_revenue)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          planId,
+          it.recipe_id,
+          Number(it.quantity || 1),
+          Number(it.margin_percent || 50),
+          it.fee_type || 'percent',
+          Number(it.fee_value || 0),
+          Number(it.cost_per_unit || 0),
+          Number(it.total_cost || 0),
+          Number(it.suggested_price || 0),
+          Number(it.total_revenue || 0)
+        ]
+      );
+    }
+
+    await connection.commit();
+    res.status(201).json({ success: true, message: 'Rencana produksi baru berhasil disimpan!', id: planId });
+  } catch (error: any) {
+    await connection.rollback();
+    res.status(500).json({ success: false, message: 'Gagal membuat rencana produksi', error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+app.put('/api/plans/:id', async (req: Request, res: Response) => {
+  const planId = req.params.id;
+  const { title, plan_date, global_margin, global_fee_type, global_fee_value, notes, items } = req.body;
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    let grandCost = 0;
+    let grandRevenue = 0;
+    if (Array.isArray(items)) {
+      for (const it of items) {
+        grandCost += Number(it.total_cost || 0);
+        grandRevenue += Number(it.total_revenue || 0);
+      }
+    }
+
+    await connection.query(
+      `UPDATE hpp_production_plans 
+       SET title = COALESCE(?, title),
+           plan_date = COALESCE(?, plan_date),
+           global_margin = COALESCE(?, global_margin),
+           global_fee_type = COALESCE(?, global_fee_type),
+           global_fee_value = COALESCE(?, global_fee_value),
+           total_cost = ?,
+           total_revenue = ?,
+           notes = ?,
+           updated_at = NOW()
+       WHERE id = ?`,
+      [
+        title || null,
+        plan_date || null,
+        global_margin !== undefined ? Number(global_margin) : null,
+        global_fee_type || null,
+        global_fee_value !== undefined ? Number(global_fee_value) : null,
+        grandCost,
+        grandRevenue,
+        notes !== undefined ? notes : null,
+        planId
+      ]
+    );
+
+    if (Array.isArray(items) && items.length > 0) {
+      await connection.query('DELETE FROM hpp_production_plan_items WHERE plan_id = ?', [planId]);
+      for (const it of items) {
+        await connection.query(
+          `INSERT INTO hpp_production_plan_items 
+           (plan_id, recipe_id, quantity, margin_percent, fee_type, fee_value, cost_per_unit, total_cost, suggested_price, total_revenue)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            planId,
+            it.recipe_id,
+            Number(it.quantity || 1),
+            Number(it.margin_percent || 50),
+            it.fee_type || 'percent',
+            Number(it.fee_value || 0),
+            Number(it.cost_per_unit || 0),
+            Number(it.total_cost || 0),
+            Number(it.suggested_price || 0),
+            Number(it.total_revenue || 0)
+          ]
+        );
+      }
+    }
+
+    await connection.commit();
+    res.json({ success: true, message: 'Rencana produksi berhasil diperbarui!' });
+  } catch (error: any) {
+    await connection.rollback();
+    res.status(500).json({ success: false, message: 'Gagal memperbarui rencana produksi', error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+app.delete('/api/plans/:id', async (req: Request, res: Response) => {
+  try {
+    await pool.query('DELETE FROM hpp_production_plans WHERE id = ?', [req.params.id]);
+    res.json({ success: true, message: 'Rencana produksi berhasil dihapus.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Gagal menghapus rencana', error: error.message });
+  }
+});
+
+app.post('/api/plans/:id/toggle-status', async (req: Request, res: Response) => {
+  const planId = req.params.id;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [plans]: any = await connection.query('SELECT * FROM hpp_production_plans WHERE id = ? FOR UPDATE', [planId]);
+    if (!plans.length) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, message: 'Rencana tidak ditemukan.' });
+    }
+
+    const currentPlan = plans[0];
+    const isExecuting = currentPlan.status !== 'completed';
+    const newStatus = isExecuting ? 'completed' : 'draft';
+
+    const [items]: any = await connection.query('SELECT * FROM hpp_production_plan_items WHERE plan_id = ?', [planId]);
+    const [recipeIngs]: any = await connection.query('SELECT * FROM hpp_recipe_ingredients');
+    const [ingredients]: any = await connection.query('SELECT id, conversion_ratio, current_stock FROM hpp_master_ingredients');
+    const ingRatioMap = new Map<string, number>(ingredients.map((i: any) => [i.id, Number(i.conversion_ratio || 1)]));
+
+    const deductions = new Map<string, number>();
+    for (const it of items) {
+      const targetQty = Number(it.quantity || 0);
+      const subIngs = recipeIngs.filter((ri: any) => ri.recipe_id === it.recipe_id);
+      for (const ri of subIngs) {
+        if (ri.ingredient_id) {
+          const ratio = ingRatioMap.get(ri.ingredient_id) || 1;
+          const usageQty = Number(ri.quantity) * targetQty;
+          const purchaseUnitDeduction = ratio > 0 ? usageQty / ratio : usageQty;
+          const cur = deductions.get(ri.ingredient_id) || 0;
+          deductions.set(ri.ingredient_id, cur + purchaseUnitDeduction);
+        }
+      }
+    }
+
+    for (const [ingId, qtyDeducted] of deductions.entries()) {
+      if (isExecuting) {
+        await connection.query('UPDATE hpp_master_ingredients SET current_stock = GREATEST(0, current_stock - ?), updated_at = NOW() WHERE id = ?', [qtyDeducted, ingId]);
+      } else {
+        await connection.query('UPDATE hpp_master_ingredients SET current_stock = current_stock + ?, updated_at = NOW() WHERE id = ?', [qtyDeducted, ingId]);
+      }
+    }
+
+    await connection.query('UPDATE hpp_production_plans SET status = ?, updated_at = NOW() WHERE id = ?', [newStatus, planId]);
+
+    await connection.commit();
+    res.json({
+      success: true,
+      status: newStatus,
+      message: isExecuting 
+        ? `Rencana "${currentPlan.title}" ditandai TERLAKSANA. Stok bahan baku telah otomatis dikurangi.`
+        : `Pelaksanaan rencana dibatalkan (Undo). Stok bahan baku telah dikembalikan.`
+    });
+  } catch (error: any) {
+    await connection.rollback();
+    res.status(500).json({ success: false, message: 'Gagal mengubah status rencana', error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+app.post('/api/plans/:id/copy-to-cashflow', async (req: Request, res: Response) => {
+  const planId = req.params.id;
+  const { pic_name = 'Admin Tangolab' } = req.body;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [plans]: any = await connection.query('SELECT * FROM hpp_production_plans WHERE id = ?', [planId]);
+    if (!plans.length) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, message: 'Rencana tidak ditemukan.' });
+    }
+    const plan = plans[0];
+
+    const [items]: any = await connection.query('SELECT * FROM hpp_production_plan_items WHERE plan_id = ?', [planId]);
+    const [recipeIngs]: any = await connection.query('SELECT * FROM hpp_recipe_ingredients');
+    const [ingredients]: any = await connection.query('SELECT * FROM hpp_master_ingredients');
+    const ingMap = new Map<string, any>(ingredients.map((i: any) => [i.id, i]));
+
+    const aggregated = new Map<string, { id: string; name: string; purchase_qty: number; purchase_unit: string; unit_price: number; total_amount: number }>();
+
+    for (const it of items) {
+      const targetQty = Number(it.quantity || 0);
+      const subIngs = recipeIngs.filter((ri: any) => ri.recipe_id === it.recipe_id);
+      for (const ri of subIngs) {
+        if (ri.ingredient_id) {
+          const ing = ingMap.get(ri.ingredient_id);
+          if (!ing) continue;
+          const ratio = Number(ing.conversion_ratio || 1);
+          const usageQty = Number(ri.quantity) * targetQty;
+          const purchaseQty = ratio > 0 ? usageQty / ratio : usageQty;
+          const unitPrice = Number(ing.purchase_price || 0);
+
+          const cur = aggregated.get(ri.ingredient_id) || {
+            id: ri.ingredient_id,
+            name: ing.name,
+            purchase_qty: 0,
+            purchase_unit: ing.purchase_unit,
+            unit_price: unitPrice,
+            total_amount: 0
+          };
+          cur.purchase_qty += purchaseQty;
+          cur.total_amount = Math.round(cur.purchase_qty * cur.unit_price);
+          aggregated.set(ri.ingredient_id, cur);
+        }
+      }
+    }
+
+    let insertedCount = 0;
+    let grandSpent = 0;
+    const today = new Date().toISOString().split('T')[0];
+
+    for (const mat of aggregated.values()) {
+      if (mat.total_amount <= 0) continue;
+      const cashflowId = `CF-PLAN-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+      const desc = `Belanja Bahan: ${mat.name} (${Math.round(mat.purchase_qty * 100) / 100} ${mat.purchase_unit}) - Rencana "${plan.title}"`;
+      
+      await connection.query(
+        `INSERT INTO hpp_cashflow 
+         (id, entry_date, type, description, ingredient_id, quantity, unit_price, total_amount, created_by)
+         VALUES (?, ?, 'cash_out', ?, ?, ?, ?, ?, ?)`,
+        [
+          cashflowId,
+          today,
+          desc,
+          mat.id,
+          Math.round(mat.purchase_qty * 100) / 100,
+          mat.unit_price,
+          mat.total_amount,
+          pic_name
+        ]
+      );
+      insertedCount++;
+      grandSpent += mat.total_amount;
+    }
+
+    await connection.commit();
+    res.json({
+      success: true,
+      message: `Berhasil menyalin ${insertedCount} item belanja bahan baku senilai Rp ${grandSpent.toLocaleString('id-ID')} ke Buku Kas Belanja Harian!`,
+      inserted_count: insertedCount,
+      total_amount: grandSpent
+    });
+  } catch (error: any) {
+    await connection.rollback();
+    res.status(500).json({ success: false, message: 'Gagal menyalin belanja ke buku kas', error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// ==============================================================================
+// 8. CEK KAPASITAS DAPUR & DETEKSI BAHAN KRITIS (KITCHEN CAPACITY & BOTTLENECK)
+// ==============================================================================
+app.get('/api/kitchen-capacity', async (_req: Request, res: Response) => {
+  try {
+    const [recipes]: any = await pool.query(`
+      SELECT r.*, m.price AS pos_price 
+      FROM hpp_recipes r 
+      LEFT JOIN menus m ON r.menu_id = m.id 
+      WHERE r.is_subassembly = 0
+      ORDER BY r.category, r.name
+    `);
+
+    const [ingredients]: any = await pool.query('SELECT * FROM hpp_master_ingredients');
+    const [recipeIngs]: any = await pool.query('SELECT * FROM hpp_recipe_ingredients');
+
+    const ingMap = new Map<string, any>(ingredients.map((i: any) => [i.id, i]));
+
+    const capacityList = recipes.map((recipe: any) => {
+      const ings = recipeIngs.filter((ri: any) => ri.recipe_id === recipe.id);
+      let maxPossible = Infinity;
+      let bottleneck = {
+        name: '-',
+        stock: 0,
+        needed: 0,
+        unit: ''
+      };
+
+      for (const ri of ings) {
+        if (ri.ingredient_id) {
+          const ing = ingMap.get(ri.ingredient_id);
+          if (ing) {
+            const ratio = Number(ing.conversion_ratio || 1);
+            const stockInUsage = Number(ing.current_stock || 0) * ratio;
+            const neededPerPortion = Number(ri.quantity || 1);
+            const possible = neededPerPortion > 0 ? Math.floor(stockInUsage / neededPerPortion) : Infinity;
+
+            if (possible < maxPossible) {
+              maxPossible = possible;
+              bottleneck = {
+                name: ing.name,
+                stock: Math.round(Number(ing.current_stock || 0) * 10) / 10,
+                needed: neededPerPortion,
+                unit: ing.usage_unit
+              };
+            }
+          }
+        }
+      }
+
+      if (maxPossible === Infinity) maxPossible = 0;
+
+      return {
+        recipe_id: recipe.id,
+        recipe_name: recipe.name,
+        category: recipe.category,
+        selling_price: Number(recipe.pos_price || 0),
+        max_possible: maxPossible,
+        bottleneck_ingredient: bottleneck.name,
+        bottleneck_stock: bottleneck.stock,
+        bottleneck_needed: bottleneck.needed,
+        bottleneck_unit: bottleneck.unit,
+        is_ready: maxPossible >= 10
+      };
+    });
+
+    const lowStockIngredients = ingredients.filter((i: any) => Number(i.current_stock || 0) <= Number(i.min_stock || 10));
+
+    res.json({
+      success: true,
+      total_recipes: capacityList.length,
+      capacity_list: capacityList,
+      low_stock_ingredients: lowStockIngredients
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Gagal menghitung kapasitas dapur', error: error.message });
   }
 });
 

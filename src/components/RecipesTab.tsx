@@ -19,11 +19,14 @@ import {
   X,
   RefreshCw,
   AlertCircle,
-  Percent
+  Percent,
+  FileDown,
+  Gauge
 } from 'lucide-react';
-import { Recipe, Ingredient, RecipeIngredient } from '../types';
+import { Recipe, Ingredient, RecipeIngredient, KitchenCapacityItem } from '../types';
 import { formatRupiah, cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { ExportService } from '../services/exportService';
 
 interface RecipesTabProps {
   recipes: Recipe[];
@@ -59,6 +62,32 @@ export default function RecipesTab({
   const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Kitchen Capacity list state
+  const [capacityList, setCapacityList] = useState<KitchenCapacityItem[]>([]);
+
+  React.useEffect(() => {
+    const fetchCapacity = async () => {
+      try {
+        const res = await fetch('/api/kitchen-capacity');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.capacity_list)) {
+          setCapacityList(data.capacity_list);
+        }
+      } catch (e) {
+        console.warn('Gagal memuat kapasitas dapur:', e);
+      }
+    };
+    fetchCapacity();
+  }, [recipes]);
+
+  const selectedCapacity = useMemo(() => {
+    if (!selectedRecipe) return null;
+    return capacityList.find(c => 
+      c.recipe_id === selectedRecipe.id || 
+      c.recipe_name.toLowerCase() === selectedRecipe.menu_name.toLowerCase()
+    ) || null;
+  }, [capacityList, selectedRecipe]);
 
   // Form Fields
   const [formName, setFormName] = useState('');
@@ -480,6 +509,14 @@ export default function RecipesTab({
 
                 <div className="flex items-center gap-2">
                   <button
+                    onClick={() => ExportService.exportRecipeToPDF(selectedRecipe)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95"
+                    title="Unduh Lembar SOP Resep Dapur dalam format PDF"
+                  >
+                    <FileDown className="w-3.5 h-3.5 text-orange-600" />
+                    <span>Ekspor SOP (PDF)</span>
+                  </button>
+                  <button
                     onClick={() => handleOpenEditBuilder(selectedRecipe)}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
                   >
@@ -488,6 +525,37 @@ export default function RecipesTab({
                   </button>
                 </div>
               </div>
+
+              {/* Kitchen Capacity Alert for Selected Recipe */}
+              {selectedCapacity && (
+                <div className={cn(
+                  "mt-3.5 p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs",
+                  selectedCapacity.max_possible === 0
+                    ? "bg-rose-50/70 border-rose-200 text-rose-800"
+                    : selectedCapacity.max_possible < 15
+                    ? "bg-amber-50/70 border-amber-200 text-amber-800"
+                    : "bg-emerald-50/70 border-emerald-200 text-emerald-800"
+                )}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Gauge className={cn(
+                      "w-4 h-4 shrink-0",
+                      selectedCapacity.max_possible === 0 ? "text-rose-600" : selectedCapacity.max_possible < 15 ? "text-amber-600" : "text-emerald-600"
+                    )} />
+                    <span className="font-bold truncate">
+                      Kapasitas Dapur: {selectedCapacity.max_possible} Porsi Siap Saji
+                    </span>
+                    <span className="text-[11px] opacity-80 hidden md:inline truncate">
+                      (Bahan Kritis: <strong>{selectedCapacity.bottleneck_ingredient}</strong> sisa {selectedCapacity.bottleneck_stock} {selectedCapacity.bottleneck_unit})
+                    </span>
+                  </div>
+                  <span className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider shrink-0 w-fit",
+                    selectedCapacity.max_possible === 0 ? "bg-rose-200 text-rose-900" : selectedCapacity.max_possible < 15 ? "bg-amber-200 text-amber-900" : "bg-emerald-200 text-emerald-900"
+                  )}>
+                    {selectedCapacity.max_possible === 0 ? 'Stok Habis' : selectedCapacity.max_possible < 15 ? 'Perlu Restock' : 'Stok Aman'}
+                  </span>
+                </div>
+              )}
 
               {/* HPP Metric Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-4">

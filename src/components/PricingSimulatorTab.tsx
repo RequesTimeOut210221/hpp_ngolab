@@ -15,9 +15,14 @@ import {
   RefreshCw,
   Search,
   ExternalLink,
-  ChevronRight
+  ChevronRight,
+  Gauge,
+  Smartphone,
+  Store,
+  HelpCircle,
+  ShieldAlert
 } from 'lucide-react';
-import { Recipe, RecipeIngredient } from '../types';
+import { Recipe, RecipeIngredient, KitchenCapacityItem } from '../types';
 import { formatRupiah, cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -55,6 +60,35 @@ export default function PricingSimulatorTab({
   const [syncSuccessMessage, setSyncSuccessMessage] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Semua');
 
+  // Kitchen capacity state
+  const [capacityList, setCapacityList] = useState<KitchenCapacityItem[]>([]);
+  const [isCapacityLoading, setIsCapacityLoading] = useState(false);
+
+  // Platform / Consignment Fee simulation states
+  const [enablePlatformFee, setEnablePlatformFee] = useState(false);
+  const [feeType, setFeeType] = useState<'percent' | 'flat'>('percent');
+  const [feeValue, setFeeValue] = useState<number>(20); // Default 20% GoFood/GrabFood
+  const [selectedChannelPreset, setSelectedChannelPreset] = useState<string>('gofood');
+
+  // Load Kitchen Capacity from backend API
+  React.useEffect(() => {
+    const fetchCapacity = async () => {
+      try {
+        setIsCapacityLoading(true);
+        const res = await fetch('/api/kitchen-capacity');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.capacity_list)) {
+          setCapacityList(data.capacity_list);
+        }
+      } catch (e) {
+        console.warn('Gagal memuat kapasitas dapur:', e);
+      } finally {
+        setIsCapacityLoading(false);
+      }
+    };
+    fetchCapacity();
+  }, [recipes]);
+
   // Filter recipes
   const filteredRecipes = useMemo(() => {
     return recipes.filter(r => {
@@ -70,6 +104,15 @@ export default function PricingSimulatorTab({
   const currentRecipe = useMemo(() => {
     return recipes.find(r => r.id === selectedRecipeId) || recipes[0] || null;
   }, [recipes, selectedRecipeId]);
+
+  // Current Kitchen Capacity for selected recipe
+  const currentCapacity = useMemo(() => {
+    if (!currentRecipe) return null;
+    return capacityList.find(c => 
+      c.recipe_id === currentRecipe.id || 
+      c.recipe_name.toLowerCase() === currentRecipe.menu_name.toLowerCase()
+    ) || null;
+  }, [capacityList, currentRecipe]);
 
   // Pricing calculations
   const simulation = useMemo(() => {
@@ -103,6 +146,30 @@ export default function PricingSimulatorTab({
     const packagingCostPct = roundedSuggestedPrice > 0 ? (packagingCost / roundedSuggestedPrice) * 100 : 0;
     const overheadCostPct = roundedSuggestedPrice > 0 ? (overheadCost / roundedSuggestedPrice) * 100 : 0;
 
+    // Online Channel / Platform Fee calculation (Rekomendasi 2)
+    let onlineGrossPrice = roundedSuggestedPrice;
+    let platformCut = 0;
+    let restoNetReceipt = roundedSuggestedPrice;
+
+    if (enablePlatformFee && feeValue > 0) {
+      if (feeType === 'percent') {
+        const rate = feeValue / 100;
+        if (rate < 1) {
+          const rawOnline = roundedSuggestedPrice / (1 - rate);
+          onlineGrossPrice = Math.ceil(rawOnline / 500) * 500;
+          platformCut = Math.round((onlineGrossPrice * feeValue) / 100);
+          restoNetReceipt = onlineGrossPrice - platformCut;
+        }
+      } else {
+        onlineGrossPrice = roundedSuggestedPrice + feeValue;
+        platformCut = feeValue;
+        restoNetReceipt = onlineGrossPrice - platformCut;
+      }
+    }
+
+    const onlineNetProfit = restoNetReceipt - totalHpp;
+    const onlineNetMarginPct = restoNetReceipt > 0 ? (onlineNetProfit / restoNetReceipt) * 100 : 0;
+
     return {
       rawIngredientCost,
       packagingCost,
@@ -116,9 +183,15 @@ export default function PricingSimulatorTab({
       simMarginPct,
       foodCostPct,
       packagingCostPct,
-      overheadCostPct
+      overheadCostPct,
+      // Platform fee fields
+      onlineGrossPrice,
+      platformCut,
+      restoNetReceipt,
+      onlineNetProfit,
+      onlineNetMarginPct
     };
-  }, [currentRecipe, targetMargin, overheadPercentage]);
+  }, [currentRecipe, targetMargin, overheadPercentage, enablePlatformFee, feeType, feeValue]);
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -295,6 +368,43 @@ export default function PricingSimulatorTab({
                 </div>
               </div>
 
+              {/* Kitchen Capacity & Bottleneck Badge (Rekomendasi 3) */}
+              {currentCapacity && (
+                <div className={cn(
+                  "my-4 p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs",
+                  currentCapacity.max_possible === 0
+                    ? "bg-rose-50/70 border-rose-200 text-rose-800"
+                    : currentCapacity.max_possible < 15
+                    ? "bg-amber-50/70 border-amber-200 text-amber-800"
+                    : "bg-emerald-50/70 border-emerald-200 text-emerald-800"
+                )}>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Gauge className={cn(
+                      "w-4 h-4 shrink-0",
+                      currentCapacity.max_possible === 0 ? "text-rose-600" : currentCapacity.max_possible < 15 ? "text-amber-600" : "text-emerald-600"
+                    )} />
+                    <div className="truncate">
+                      <span className="font-bold text-slate-900">
+                        Kapasitas Dapur Real-time: <strong className="font-mono text-sm underline">{currentCapacity.max_possible} Porsi</strong>
+                      </span>
+                      <span className="text-[11px] opacity-80 block sm:inline sm:ml-2">
+                        (Bahan Kritis: <strong>{currentCapacity.bottleneck_ingredient}</strong>, stok tersisa {currentCapacity.bottleneck_stock} {currentCapacity.bottleneck_unit})
+                      </span>
+                    </div>
+                  </div>
+                  <span className={cn(
+                    "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider shrink-0 w-fit",
+                    currentCapacity.max_possible === 0
+                      ? "bg-rose-200 text-rose-900"
+                      : currentCapacity.max_possible < 15
+                      ? "bg-amber-200 text-amber-900"
+                      : "bg-emerald-200 text-emerald-900"
+                  )}>
+                    {currentCapacity.max_possible === 0 ? 'Stok Kritis (0 Porsi)' : currentCapacity.max_possible < 15 ? 'Perlu Restock' : 'Stok Dapur Aman'}
+                  </span>
+                </div>
+              )}
+
               {/* Cost Basis Toggle: AVCO vs Latest Price */}
               <div className="py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -329,7 +439,7 @@ export default function PricingSimulatorTab({
               </div>
 
               {/* Live Margin Slider & Controls */}
-              <div className="py-6 border-b border-slate-100 space-y-4">
+              <div className="py-5 border-b border-slate-100 space-y-4">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-800 flex items-center gap-2">
                     <Percent className="w-4 h-4 text-orange-500" />
@@ -358,8 +468,117 @@ export default function PricingSimulatorTab({
                 </div>
               </div>
 
+              {/* Platform Fee & Konsinyasi Simulator (Rekomendasi 2) */}
+              <div className="py-5 border-b border-slate-100 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Smartphone className="w-4 h-4 text-orange-500" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800">
+                        Simulasi Channel Penjualan &amp; Bagi Hasil (Online Delivery / Konsinyasi)
+                      </span>
+                      <p className="text-[11px] text-slate-400">
+                        Kalkulasi markup harga online agar laba bersih resto tetap aman setelah potongan aplikasi/mitra
+                      </p>
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={enablePlatformFee} 
+                      onChange={(e) => setEnablePlatformFee(e.target.checked)} 
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+                  </label>
+                </div>
+
+                {enablePlatformFee && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="p-4 rounded-xl bg-orange-50/40 border border-orange-200/80 space-y-3"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] font-bold text-slate-700">Preset Channel:</span>
+                      {[
+                        { id: 'gofood', label: 'GoFood / Grab (20%)', type: 'percent', val: 20 },
+                        { id: 'shopee', label: 'ShopeeFood (20%)', type: 'percent', val: 20 },
+                        { id: 'canteen', label: 'Kantin Kampus (10%)', type: 'percent', val: 10 },
+                        { id: 'warung', label: 'Titip Warung (Rp 2.000)', type: 'flat', val: 2000 },
+                        { id: 'custom', label: 'Custom Nilai', type: feeType, val: feeValue }
+                      ].map((preset) => (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedChannelPreset(preset.id);
+                            setFeeType(preset.type as any);
+                            setFeeValue(preset.val);
+                          }}
+                          className={cn(
+                            "px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all border",
+                            selectedChannelPreset === preset.id
+                              ? "bg-orange-500 text-white border-orange-600 shadow-sm"
+                              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                          )}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">
+                          Tipe Potongan Mitra
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={feeType}
+                            onChange={(e) => {
+                              setFeeType(e.target.value as any);
+                              setSelectedChannelPreset('custom');
+                            }}
+                            className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-bold focus:outline-none focus:ring-1 focus:ring-orange-500"
+                          >
+                            <option value="percent">Persentase (%)</option>
+                            <option value="flat">Nominal Flat (Rp)</option>
+                          </select>
+                          <input
+                            type="number"
+                            min="0"
+                            value={feeValue}
+                            onChange={(e) => {
+                              setFeeValue(Number(e.target.value));
+                              setSelectedChannelPreset('custom');
+                            }}
+                            className="w-28 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-mono font-bold focus:outline-none focus:ring-1 focus:ring-orange-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="bg-white/80 rounded-lg p-2.5 border border-slate-200 text-[11px] text-slate-600 space-y-1">
+                        <div className="flex justify-between">
+                          <span>Potongan Aplikasi / Mitra ({feeType === 'percent' ? `${feeValue}%` : formatRupiah(feeValue)}):</span>
+                          <span className="font-mono font-bold text-rose-600">-{formatRupiah(simulation.platformCut)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Uang Masuk ke Kas Resto (Net):</span>
+                          <span className="font-mono font-bold text-emerald-600">{formatRupiah(simulation.restoNetReceipt)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+
               {/* Simulation Comparison Bento Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-6">
+              <div className={cn(
+                "grid grid-cols-1 gap-4 pt-6",
+                enablePlatformFee ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3"
+              )}>
                 {/* Total HPP Card */}
                 <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
@@ -384,17 +603,20 @@ export default function PricingSimulatorTab({
                   </div>
                 </div>
 
-                {/* Suggested Selling Price Card */}
+                {/* Suggested Selling Price (Dine-in / Offline) Card */}
                 <div className="p-4 rounded-xl bg-orange-50/70 border border-orange-200">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-orange-700 mb-1">
-                    Rekomendasi Harga Jual Baru
-                  </p>
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-orange-700">
+                      Harga Jual Dine-in (Offline)
+                    </p>
+                    <Store className="w-3.5 h-3.5 text-orange-600" />
+                  </div>
                   <p className="text-xl font-mono font-black text-orange-600">
                     {formatRupiah(simulation.suggestedPrice)}
                   </p>
                   <div className="mt-2 text-[10px] text-orange-800 space-y-0.5">
                     <div className="flex justify-between">
-                      <span>Laba Kotor (Rp):</span>
+                      <span>Laba Kotor Resto:</span>
                       <span className="font-mono font-bold">{formatRupiah(simulation.simGrossProfit)}</span>
                     </div>
                     <div className="flex justify-between">
@@ -407,6 +629,35 @@ export default function PricingSimulatorTab({
                     </div>
                   </div>
                 </div>
+
+                {/* Online / Delivery Channel Card (Conditional) */}
+                {enablePlatformFee && (
+                  <div className="p-4 rounded-xl bg-purple-50/70 border border-purple-200">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-purple-700">
+                        Harga Jual Online / Ojol
+                      </p>
+                      <Smartphone className="w-3.5 h-3.5 text-purple-600" />
+                    </div>
+                    <p className="text-xl font-mono font-black text-purple-700">
+                      {formatRupiah(simulation.onlineGrossPrice)}
+                    </p>
+                    <div className="mt-2 text-[10px] text-purple-900 space-y-0.5">
+                      <div className="flex justify-between">
+                        <span>Potongan Platform:</span>
+                        <span className="font-mono font-bold text-rose-600">-{formatRupiah(simulation.platformCut)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Kas Bersih Resto:</span>
+                        <span className="font-mono font-bold text-emerald-700">{formatRupiah(simulation.restoNetReceipt)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Laba Bersih Riil:</span>
+                        <span className="font-mono font-bold text-purple-800">{formatRupiah(simulation.onlineNetProfit)} ({simulation.onlineNetMarginPct.toFixed(1)}%)</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Margin Delta Comparison Card */}
                 <div className="p-4 rounded-xl bg-indigo-50/50 border border-indigo-100">

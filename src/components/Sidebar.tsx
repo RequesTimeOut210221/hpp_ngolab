@@ -5,6 +5,7 @@ import {
   UtensilsCrossed, 
   Package, 
   BarChart3,
+  ClipboardCheck,
   ChevronLeft, 
   ChevronRight, 
   LogOut, 
@@ -43,6 +44,13 @@ const navItems = [
     icon: TrendingUp, 
     section: 'HPP & Pricing Engine',
     badge: 'POS Sync'
+  },
+  { 
+    id: 'planner', 
+    label: 'Rencana Batch & Belanja', 
+    icon: ClipboardCheck, 
+    section: 'Resep & Manufaktur',
+    badge: 'Batch Prep'
   },
   { 
     id: 'recipes', 

@@ -30,6 +30,10 @@ const tabTitles: Record<string, { title: string; subtitle: string }> = {
     title: 'Simulator Margin & Pricing POS',
     subtitle: 'Kalkulasi HPP 3-tier, target margin keuntungan, dan integrasi sinkronisasi harga jual menu'
   },
+  planner: {
+    title: 'Rencana Produksi & Belanja Pasar Gabungan',
+    subtitle: 'Perencanaan batch menu porsi besar, kalkulasi kebutuhan bahan baku, dan pembuatan daftar belanja pasar'
+  },
   recipes: {
     title: 'Resep Bertingkat (3-Tier Recipe BOM)',
     subtitle: 'Hierarki Menu Akhir (Level 1) → Bahan Olahan (Level 2) → Bahan Baku Mentah (Level 3)'
