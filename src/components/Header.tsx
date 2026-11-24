@@ -99,20 +99,6 @@ export default function Header({
         >
           <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-orange-500' : ''}`} />
         </button>
-
-        {/* Divider */}
-        <div className="h-6 w-[1px] bg-slate-200/80 mx-0.5" />
-
-        {/* User Profile Badge */}
-        <div className="flex items-center gap-3">
-          <div className="text-right hidden sm:block">
-            <p className="text-xs font-bold text-slate-900 leading-tight">Ikhwanul</p>
-            <p className="text-[10px] text-slate-400 font-medium">Finance Architect</p>
-          </div>
-          <div className="w-8 h-8 rounded-lg bg-orange-50 border border-orange-200 flex items-center justify-center text-orange-600 font-bold text-xs shadow-sm">
-            IK
-          </div>
-        </div>
       </div>
     </header>
   );

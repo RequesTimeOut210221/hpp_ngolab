@@ -8,7 +8,6 @@ import {
   ChevronLeft, 
   ChevronRight, 
   LogOut, 
-  ShieldCheck,
   Building2,
   ExternalLink
 } from 'lucide-react';
@@ -22,8 +21,6 @@ interface SidebarProps {
   currentUser?: AuthUser | null;
   onLogout?: () => void;
 }
-
-export type UserRole = 'Super Admin' | 'Kasir' | 'Koki' | 'Support';
 
 const navItems = [
   { 
@@ -65,7 +62,6 @@ const navItems = [
 
 export default function Sidebar({ activeTab, setActiveTab, currentUser, onLogout }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [activeRole, setActiveRole] = useState<UserRole>('Super Admin');
 
   const sections = Array.from(new Set(navItems.map(item => item.section)));
 
@@ -103,32 +99,6 @@ export default function Sidebar({ activeTab, setActiveTab, currentUser, onLogout
           </motion.div>
         )}
       </div>
-
-      {/* Role Switcher */}
-      {!isCollapsed && (
-        <div className="px-4 py-3.5 border-b border-slate-200/60 bg-slate-50/50">
-          <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 flex items-center gap-1.5">
-            <ShieldCheck className="w-3 h-3 text-orange-500" />
-            Tampilan Peran:
-          </label>
-          <div className="flex gap-1 p-1 bg-slate-200/60 rounded-xl border border-slate-200/80 shadow-inner">
-            {(['Super Admin', 'Kasir', 'Koki', 'Support'] as UserRole[]).map(r => (
-              <button
-                key={r}
-                onClick={() => setActiveRole(r)}
-                className={cn(
-                  'flex-1 text-[10px] font-bold py-1.5 px-1 rounded-lg transition-all',
-                  activeRole === r
-                    ? 'bg-white text-orange-600 shadow-sm border border-slate-200'
-                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
-                )}
-              >
-                {r === 'Super Admin' ? 'Admin' : r}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Navigation Groups */}
       <div className="flex-1 overflow-y-auto py-5 space-y-6 custom-scrollbar">
